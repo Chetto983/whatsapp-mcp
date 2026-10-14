@@ -2252,20 +2252,15 @@ func newRESTMuxWithClientGetter(getClient func() *whatsmeow.Client, messageStore
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		client := currentClient()
-		_, wasPaired, _, _, _ := pairing.snapshot()
-		hadDeviceID := client != nil && client.Store != nil && client.Store.ID != nil
-		if err := logoutWhatsAppClient(context.Background(), client); err != nil {
+		// Unpaired, this is how Aura's cockpit asks for a live code: a fresh bridge starts a
+		// fresh pairing.
+		if err := logoutWhatsAppClient(context.Background(), currentClient()); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"success": false, "error": err.Error()})
 			return
 		}
-		restart := false
-		if hadDeviceID || wasPaired {
-			pairing.setLoggedOut()
-			restart = true
-			requestBridgeRestart()
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"success": true, "restart": restart})
+		pairing.setLoggedOut()
+		requestBridgeRestart()
+		writeJSON(w, http.StatusOK, map[string]any{"success": true, "restart": true})
 	})
 
 	// Health check endpoint

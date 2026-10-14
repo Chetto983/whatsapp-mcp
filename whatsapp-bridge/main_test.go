@@ -2493,6 +2493,18 @@ func TestManagementLogoutRequestsRestartInsteadOfRelink(t *testing.T) {
 
 func TestManagementLogoutUsesCurrentClientAfterRelink(t *testing.T) {
 	const token = "supersecrettoken1234567890abcdef"
+	origLogout := logoutWhatsAppClient
+	origRestart := requestBridgeRestart
+	t.Cleanup(func() {
+		logoutWhatsAppClient = origLogout
+		requestBridgeRestart = origRestart
+	})
+	var loggedOut *whatsmeow.Client
+	logoutWhatsAppClient = func(_ context.Context, client *whatsmeow.Client) error {
+		loggedOut = client
+		return nil
+	}
+	requestBridgeRestart = func() {}
 
 	oldClient := newTestClientWithSelf(&mockLIDStore{}, phonePN)
 	currentClient := newWhatsAppClientRef(oldClient)
@@ -2513,9 +2525,8 @@ func TestManagementLogoutUsesCurrentClientAfterRelink(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
-	qr, paired, _, stateValue, _ := state.snapshot()
-	if paired || qr != "fresh-code" || stateValue != "waiting_qr" {
-		t.Fatalf("logout used stale client state after relink: paired=%v qr=%q state=%q", paired, qr, stateValue)
+	if loggedOut != newClient {
+		t.Fatalf("logout went to client %p, want the current client %p, not the one replaced by the relink", loggedOut, newClient)
 	}
 	select {
 	case <-relinkChan:
@@ -2552,10 +2563,19 @@ func TestRotateWhatsAppClientForRelinkPublishesFreshClient(t *testing.T) {
 	}
 }
 
-func TestManagementLogoutWhileWaitingQRKeepsQRCode(t *testing.T) {
+// Aura's cockpit offers "New code" beside the QR and posts logout for it: a code that has sat on
+// screen past its minute scans into nothing. Keeping the code on an unpaired logout made that
+// button do nothing (Aura's lab VM, 2026-10-14: twelve presses, the same dead code), so an
+// unpaired logout restarts the bridge too, which starts a fresh pairing.
+func TestManagementLogoutWhileWaitingQRStartsAFreshPairing(t *testing.T) {
 	const token = "supersecrettoken1234567890abcdef"
+	origRestart := requestBridgeRestart
+	t.Cleanup(func() { requestBridgeRestart = origRestart })
+	restartCalled := false
+	requestBridgeRestart = func() { restartCalled = true }
+
 	state := &pairingState{}
-	state.setQR("active-code")
+	state.setQR("dead-code")
 	relinkChan := make(chan bool, 1)
 	handler := newRESTMuxWithRelink(newTestClient(&mockLIDStore{}), newTestMessageStore(t), 8080, token, nil, state, relinkChan)
 
@@ -2566,9 +2586,11 @@ func TestManagementLogoutWhileWaitingQRKeepsQRCode(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", resp.Code, resp.Body.String())
 	}
-	qr, paired, _, stateValue, _ := state.snapshot()
-	if paired || qr != "active-code" || stateValue != "waiting_qr" {
-		t.Fatalf("unexpected state after unpaired logout: paired=%v qr=%q state=%q", paired, qr, stateValue)
+	if !restartCalled {
+		t.Fatal("an unpaired logout did not restart the bridge, so no fresh code will come")
+	}
+	if qr, _, _, _, _ := state.snapshot(); qr != "" {
+		t.Fatalf("the bridge still serves %q after asking for a fresh pairing", qr)
 	}
 	select {
 	case <-relinkChan:
