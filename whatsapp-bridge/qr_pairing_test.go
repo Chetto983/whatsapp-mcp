@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"io"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +36,50 @@ func TestAwaitPairingGivesUpOnASilentQRChannel(t *testing.T) {
 	}
 	if qr, _, _, state, _ := pairing.snapshot(); qr != "" || state != "qr_timeout" {
 		t.Fatalf("after giving up, the bridge serves code %q in state %q; want no code and qr_timeout", qr, state)
+	}
+}
+
+// The tenant gateway copies a bridge's output into the container's log. A pairing code drawn
+// there would be a live credential for its minute, readable by anything that reads the log, so the
+// drawing is for a console only.
+func TestAwaitPairingDrawsNoCodeIntoALog(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = stdout })
+
+	qrChan := make(chan whatsmeow.QRChannelItem, 2)
+	qrChan <- whatsmeow.QRChannelItem{Event: whatsmeow.QRChannelEventCode, Code: "2@secret-pairing-ref"}
+	qrChan <- whatsmeow.QRChannelSuccess
+	close(qrChan)
+	if err := awaitPairing(context.Background(), qrChan, &pairingState{}, waLog.Noop); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = stdout
+	_ = writer.Close()
+	logged, _ := io.ReadAll(reader)
+
+	if strings.ContainsAny(string(logged), "█▀▄") || strings.Contains(string(logged), "secret-pairing-ref") {
+		t.Fatalf("the pairing code reached a log:\n%s", logged)
+	}
+}
+
+// whatsmeow logs every QR code it emits at debug level (qrchan.go "Emitting QR code %s"), and
+// the protocol traffic with it. Into a log the bridge writes at info.
+func TestBridgeLogsAtInfoIntoALog(t *testing.T) {
+	_, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout := os.Stdout
+	os.Stdout = writer
+	t.Cleanup(func() { os.Stdout = stdout })
+
+	if got := bridgeLogLevel(); got != "INFO" {
+		t.Fatalf("bridge log level into a log = %q, want INFO", got)
 	}
 }
 

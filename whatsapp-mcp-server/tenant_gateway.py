@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import IO
 from urllib.parse import urlsplit
 
 import requests
@@ -26,6 +27,17 @@ def bridge_token() -> str:
     if len(token) < 16:
         raise ValueError("WHATSAPP_BRIDGE_TOKEN is required and must be at least 16 characters")
     return token
+
+
+def _forward_output(stream: IO[bytes], prefix: str) -> None:
+    """Copy a bridge's output into the container's log until the bridge closes it.
+
+    It went to /dev/null until 2026-10-14, when a bridge served one dead QR code for hours on
+    Aura's lab VM and said why to nobody.
+    """
+    for line in iter(stream.readline, b""):
+        sys.stderr.write(prefix + line.decode("utf-8", "replace").rstrip() + "\n")
+        sys.stderr.flush()
 
 
 def _free_port() -> int:
@@ -81,9 +93,12 @@ class RuntimeRegistry:
             [str(self.binary)],
             cwd=tenant_root,
             env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
         )
+        threading.Thread(
+            target=_forward_output, args=(process.stdout, f"whatsapp-bridge[{identity[:8]}]: "), daemon=True
+        ).start()
         runtime = TenantRuntime(identity=identity, port=port, process=process)
         self._wait_until_ready(runtime)
         return runtime

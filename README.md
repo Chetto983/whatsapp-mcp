@@ -92,8 +92,9 @@ docker run -d --name whatsapp-mcp \
   -v whatsapp-mcp-store:/app/whatsapp-bridge/store \
   ghcr.io/chetto1983/whatsapp-mcp:latest
 
-# Scan the QR code printed in the logs, then point your MCP client at
-# http://localhost:8080/mcp
+# The pairing code is served by GET /api/qr on :8081 (bearer token plus an X-Tenant-ID
+# header), not printed into the logs, where it would be a live credential for its minute.
+# The logs carry what the bridge does, one line per event, tagged with its tenant.
 docker logs -f whatsapp-mcp
 ```
 

@@ -2601,6 +2601,23 @@ func connectWithQRCode(client *whatsmeow.Client, pairing *pairingState, logger w
 	return nil
 }
 
+// stdoutIsTerminal tells a person at a console from a log: Aura's tenant gateway copies this
+// output into the container's log, where a drawn pairing code would be a live credential for its
+// minute.
+func stdoutIsTerminal() bool {
+	info, err := os.Stdout.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// bridgeLogLevel keeps whatsmeow's debug output, which carries every QR code it emits and the
+// protocol traffic, to a console.
+func bridgeLogLevel() string {
+	if stdoutIsTerminal() {
+		return "DEBUG"
+	}
+	return "INFO"
+}
+
 func awaitPairing(ctx context.Context, qrChan <-chan whatsmeow.QRChannelItem, pairing *pairingState, logger waLog.Logger) error {
 	qrSuccess := false
 	terminalState := ""
@@ -2627,6 +2644,10 @@ loop:
 		switch evt.Event {
 		case "code":
 			pairing.setQR(evt.Code)
+			if !stdoutIsTerminal() {
+				fmt.Println("A new pairing code is ready at /api/qr")
+				continue
+			}
 			fmt.Println("\nScan this QR code with your WhatsApp app:")
 			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 			fmt.Println("\nWaiting for QR code scan...")
@@ -2675,7 +2696,7 @@ func main() {
 	flag.Parse()
 
 	// Set up logger with DEBUG level for more detailed logging
-	logger := waLog.Stdout("Client", "DEBUG", true)
+	logger := waLog.Stdout("Client", bridgeLogLevel(), true)
 	logger.Infof("Starting WhatsApp client...")
 
 	if forwardSelfMessages {
