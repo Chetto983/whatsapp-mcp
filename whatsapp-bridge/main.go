@@ -2595,39 +2595,61 @@ func connectWithQRCode(client *whatsmeow.Client, pairing *pairingState, logger w
 		return err
 	}
 
+	if err := awaitPairing(ctx, qrChan, pairing, logger); err != nil {
+		client.Disconnect()
+		return err
+	}
+	if client.Store != nil && client.Store.ID != nil {
+		pairing.setPaired(client.Store.ID.String())
+	}
+	fmt.Println("\nSuccessfully connected and authenticated!")
+	return nil
+}
+
+func awaitPairing(ctx context.Context, qrChan <-chan whatsmeow.QRChannelItem, pairing *pairingState, logger waLog.Logger) error {
 	qrSuccess := false
 	terminalState := ""
 	terminalErr := ""
-	for evt := range qrChan {
-		done := false
+loop:
+	for {
+		var evt whatsmeow.QRChannelItem
+		var open bool
+		select {
+		case evt, open = <-qrChan:
+			if !open {
+				break loop
+			}
+		case <-ctx.Done():
+			// whatsmeow's emitter can stop without closing the channel: on an expected
+			// disconnect, such as the reconnect it forces after keepalives have failed for
+			// three minutes (keepalive.go), it returns without a final event (qrchan.go). On
+			// Aura's lab VM, 2026-10-14, a host that slept left the bridge serving one dead
+			// code for hours.
+			terminalState = "qr_timeout"
+			terminalErr = "QR codes stopped before the pairing finished"
+			break loop
+		}
 		switch evt.Event {
 		case "code":
 			pairing.setQR(evt.Code)
 			fmt.Println("\nScan this QR code with your WhatsApp app:")
 			qrterminal.GenerateHalfBlock(evt.Code, qrterminal.L, os.Stdout)
 			fmt.Println("\nWaiting for QR code scan...")
+			continue
 		case "success":
 			qrSuccess = true
-			if client.Store != nil && client.Store.ID != nil {
-				pairing.setPaired(client.Store.ID.String())
-			}
-			done = true
 		case "timeout":
 			terminalState = "qr_timeout"
 			terminalErr = "QR code timed out"
-			done = true
 		case "err-client-outdated":
 			terminalState = "client_outdated"
 			terminalErr = "WhatsApp client outdated"
-			done = true
 		case "err-scanned-without-multidevice":
 			terminalState = "qr_scanned_without_multidevice"
 			terminalErr = "QR was scanned without multi-device support"
-			done = true
 		case "err-unexpected-state":
 			terminalState = "unexpected_pairing_state"
 			terminalErr = "unexpected WhatsApp pairing state"
-			done = true
 		case "error":
 			terminalState = "pairing_error"
 			if evt.Error != nil {
@@ -2635,17 +2657,14 @@ func connectWithQRCode(client *whatsmeow.Client, pairing *pairingState, logger w
 			} else {
 				terminalErr = "WhatsApp pairing error"
 			}
-			done = true
 		default:
 			logger.Warnf("Unhandled QR channel event: %s", evt.Event)
+			continue
 		}
-		if done {
-			break
-		}
+		break
 	}
 
 	if qrSuccess {
-		fmt.Println("\nSuccessfully connected and authenticated!")
 		return nil
 	}
 	if terminalState == "" {
@@ -2654,7 +2673,6 @@ func connectWithQRCode(client *whatsmeow.Client, pairing *pairingState, logger w
 	}
 	logger.Warnf("%s: %s", terminalState, terminalErr)
 	pairing.setUnavailable(terminalState, terminalErr)
-	client.Disconnect()
 	return fmt.Errorf("%s: %s", terminalState, terminalErr)
 }
 
