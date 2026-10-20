@@ -22,8 +22,8 @@ dependencies = [
     # is the release that introduced `AuthSettings.validate_token_resource`,
     # which mcp_security.py's auth_settings() sets explicitly. The SDK
     # provides its own `httpx2` transport client.
-    "mcp>=2.2.0",
-    "pyjwt[crypto]>=2.13.0",
+    "mcp>=2.3.0",
+    "pyjwt[crypto]>=2.15.1",
     "requests>=2.34.2",
     # 627db67 (#44) pinned anyio<4.9 for a real cancel-scope regression that
     # crashed the MCP server at startup; ea5254f (dependabot, #49) widened
@@ -38,7 +38,7 @@ dependencies = [
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.4.0",
-    "ruff>=0.15.15",
+    "ruff>=0.17.1",
 ]
 
 [project.urls]
